@@ -190,7 +190,6 @@ def check_refund_policy_data(order: dict) -> dict:
     if order.get("is_holiday_order"):
         holiday_days = int(order.get("holiday_deadline_days") or 0)
         if days_since_order <= holiday_days:
-            # Still check high-value escalation under Rule 3
             if total_amount > 500:
                 return {
                     "eligible": False,
@@ -259,8 +258,10 @@ def check_refund_policy_data(order: dict) -> dict:
 
 
 @tool
-async def get_customer_order(customer_id: Annotated[str, "Customer UUID or email prefix"]) -> dict:
-    """Fetch the latest customer order with product and item details."""
+async def get_customer_order(
+    customer_id: Annotated[str, "Customer UUID or email prefix"]
+) -> dict:
+    """Fetch the customer's latest order with full product and item details."""
     return await get_customer_order_data(customer_id)
 
 
@@ -268,3 +269,18 @@ async def get_customer_order(customer_id: Annotated[str, "Customer UUID or email
 def get_refund_policy() -> str:
     """Return the full ShopEase refund policy text so you can reason over it."""
     return POLICY_PATH.read_text()
+
+
+@tool
+async def check_refund_policy(
+    customer_id: Annotated[str, "Customer UUID or email prefix"]
+) -> dict:
+    """
+    Fetch the customer's latest order and run it through the deterministic
+    9-rule ShopEase policy engine. Returns a structured recommendation:
+    approved / denied / escalated, plus the rule number and any notes.
+    Always call this tool (alongside get_refund_policy) before making a
+    refund decision — never rely on reasoning alone.
+    """
+    order = await get_customer_order_data(customer_id)
+    return check_refund_policy_data(order)
