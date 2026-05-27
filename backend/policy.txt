@@ -1,0 +1,6 @@
+1. Items marked Final Sale cannot be refunded under any circumstances
+2. Refund requests must be submitted within 30 days of purchase (45 days for premium customers)
+3. Refunds over $500 require human escalation
+4. Damaged or defective items are eligible for full refund within 60 days
+5. Digital products are non-refundable after download
+6. Orders already shipped cannot be cancelled, only returned after delivery
