@@ -20,7 +20,7 @@ docker-compose up
 The React + Vite frontend serves customer chat and an operations dashboard through Nginx. FastAPI exposes the chat, trace, and health APIs. PostgreSQL 16 stores customers, orders, refund requests, Langfuse tables, and agent logs. LangGraph runs the refund agent tool loop with OpenAI GPT-4o, while Langfuse captures traces in the self-hosted container.
 
 ## Agent Loop
-Requests pass through prompt-injection screening before any model call. Safe requests require `OPENAI_API_KEY`; without it, the API escalates with a support handoff message instead of guessing a policy outcome. With an API key, requests enter a LangGraph StateGraph that calls `get_customer_order`, evaluates `check_refund_policy`, validates the structured Pydantic decision, calculates token cost from LiteLLM pricing JSON, and writes the refund request plus audit log.
+Requests pass through prompt-injection screening before any model call. Safe requests require `OPENAI_API_KEY`; without it, the API escalates with a support handoff message instead of guessing a policy outcome. With an API key, requests enter a LangGraph StateGraph that calls `get_customer_order`, evaluates `check_refund_policy`, validates the structured Pydantic decision, calculates token cost from Langfuse's models endpoint, and writes the refund request plus audit log.
 
 ## Edge Cases Handled
 | Customer | Scenario | Expected outcome |
