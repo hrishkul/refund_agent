@@ -1,7 +1,7 @@
-# Worknoon Refund Agent
+# Hrishikesh's Refund Agent
 
 ## About
-Worknoon Refund Agent is a fully containerized AI refund workflow that combines deterministic policy enforcement, GPT-4o reasoning, human escalation, PostgreSQL audit logs, and self-hosted Langfuse observability for production-style e-commerce refund decisions.
+Hrishikesh's Refund Agent is a fully containerized AI refund workflow that combines deterministic policy enforcement, GPT-4o reasoning, human escalation, PostgreSQL audit logs, and self-hosted Langfuse observability for production-style e-commerce refund decisions.
 
 ## Setup
 ```bash
@@ -37,5 +37,5 @@ Requests pass through prompt-injection screening before any model call. Safe req
 ## Observability with Langfuse
 Langfuse runs locally through Docker Compose and is initialized with `LANGFUSE_INIT_*` environment variables. The backend receives the same local project API keys, so `@observe()` traces are sent to the `worknoon-refund-agent` Langfuse project and correlate with the backend `request_id`, model, token, latency, cost, decision, and policy rule fields.
 
-## Relevance to Worknoon
+## Relevance to Hrishikesh's Refund Agent
 The same architecture maps cleanly to booking dispute resolution: fetch booking and user context, run deterministic policy tools for cancellation, refunds, and escalation thresholds, then let the agent explain the decision while every action remains auditable through trace logs and cost telemetry.
