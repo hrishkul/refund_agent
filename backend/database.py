@@ -1,6 +1,7 @@
 from collections.abc import AsyncGenerator
 from os import getenv
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -31,3 +32,4 @@ async def init_db() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(text("ALTER TABLE order_items ADD COLUMN IF NOT EXISTS returned_at TIMESTAMP WITH TIME ZONE"))

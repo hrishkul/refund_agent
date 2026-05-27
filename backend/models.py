@@ -82,6 +82,7 @@ class OrderItem(Base):
     unit_price: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     is_defective: Mapped[bool] = mapped_column(Boolean, default=False)
     downloaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    returned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     order: Mapped[Order] = relationship(back_populates="items")
     product: Mapped[Product] = relationship()

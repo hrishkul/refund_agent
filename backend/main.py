@@ -23,7 +23,7 @@ from models import Customer, Decision, RefundLog, RefundRequest, RefundStatus
 from pricing import calculate_cost
 from security import check_injection
 from seed import seed_data
-from tools import check_refund_policy_data, get_customer_order_data
+from tools import check_refund_policy_data, get_customer_order_data, mark_latest_order_returned
 
 
 class ChatHistoryMessage(BaseModel):
@@ -87,6 +87,18 @@ SHOP_TERMS = {
     "payment",
     "money",
     "chargeback",
+    "escalate",
+    "escalted",
+    "escalated",
+    "escalating",
+    "escalation",
+    "human",
+    "agent",
+    "support",
+    "senior",
+    "senior agent",
+    "supervisor",
+    "manager",
     "final sale",
     "take it back",
     "confirm",
@@ -151,6 +163,37 @@ def _wants_order_lookup(message: str) -> bool:
     return any(term in normalized for term in lookup_terms) and not any(term in normalized for term in REFUND_TERMS)
 
 
+def _is_return_update(message: str) -> bool:
+    normalized = message.lower()
+    update_terms = [
+        "i returned it",
+        "i have returned it",
+        "i already returned",
+        "already returned it",
+        "returned the product",
+        "returned my product",
+        "sent it back",
+        "shipped it back",
+        "mailed it back",
+        "dropped it off",
+    ]
+    question_terms = ["did i", "have i", "has it", "is it", "?"]
+    return any(term in normalized for term in update_terms) and not any(term in normalized for term in question_terms)
+
+
+def _wants_return_status(message: str) -> bool:
+    normalized = message.lower()
+    status_terms = [
+        "have i returned",
+        "did i return",
+        "has it been returned",
+        "is it returned",
+        "returned it already",
+        "already returned",
+    ]
+    return any(term in normalized for term in status_terms)
+
+
 async def _order_lookup_response(customer_id: str) -> AgentResult:
     order = await get_customer_order_data(customer_id)
     if not order.get("found"):
@@ -162,8 +205,41 @@ async def _order_lookup_response(customer_id: str) -> AgentResult:
         )
     status = str(order.get("order_status", "unknown")).replace("_", " ")
     delivered = f" delivered {order['days_since_order']} days ago" if order.get("order_status") == "delivered" else f" currently marked {status}"
-    reason = f"Hi {order.get('customer_name', 'there')}. Your latest order is {order.get('product_name', 'an item')}, total ${float(order.get('total_amount') or 0):.2f},{delivered}."
+    return_status = " It is marked returned." if order.get("is_returned") else " It is not marked returned yet."
+    reason = f"Hi {order.get('customer_name', 'there')}. Your latest order is {order.get('product_name', 'an item')}, total ${float(order.get('total_amount') or 0):.2f},{delivered}.{return_status}"
     return AgentResult(decision="none", reason=reason, model_used="order-lookup", order_details=order)
+
+
+async def _return_update_response(customer_id: str) -> AgentResult:
+    order = await mark_latest_order_returned(customer_id)
+    if not order.get("found"):
+        return AgentResult(
+            decision="none",
+            reason="I couldn't find a recent ShopEase order for that customer ID. Please check the customer ID and try again.",
+            model_used="return-update",
+            order_details=order,
+        )
+    returned_at = order.get("returned_at")
+    reason = f"Thanks, {order.get('customer_name', 'there')}. I've marked {order.get('product_name', 'your item')} as returned in your order record."
+    if returned_at:
+        reason += " Maya will use that return status when checking your refund."
+    return AgentResult(decision="none", reason=reason, model_used="return-update", order_details=order)
+
+
+async def _return_status_response(customer_id: str) -> AgentResult:
+    order = await get_customer_order_data(customer_id)
+    if not order.get("found"):
+        return AgentResult(
+            decision="none",
+            reason="I couldn't find a recent ShopEase order for that customer ID. Please check the customer ID and try again.",
+            model_used="return-status",
+            order_details=order,
+        )
+    if order.get("is_returned"):
+        reason = f"Yes. {order.get('product_name', 'Your item')} is marked as returned in your ShopEase order record."
+    else:
+        reason = f"I don't see {order.get('product_name', 'your item')} marked as returned in your ShopEase order record yet."
+    return AgentResult(decision="none", reason=reason, model_used="return-status", order_details=order)
 
 
 def _latest_formal_decision(history: list[ChatHistoryMessage]) -> ChatHistoryMessage | None:
@@ -405,6 +481,14 @@ async def chat(payload: ChatRequest, request: Request, session: AsyncSession = D
         )
         await _save_refund_log(session, effective_customer_id, payload.message, result, request_id)
         return ChatResponse(decision=result.decision, reason=result.reason, escalated=False, policy_rule=result.policy_rule)
+
+    if _is_return_update(payload.message):
+        result = await _return_update_response(effective_customer_id)
+        return ChatResponse(decision=result.decision, reason=result.reason, escalated=False, policy_rule=None)
+
+    if _wants_return_status(payload.message):
+        result = await _return_status_response(effective_customer_id)
+        return ChatResponse(decision=result.decision, reason=result.reason, escalated=False, policy_rule=None)
 
     if follow_up := _follow_up_response(payload.message, payload.history):
         return ChatResponse(decision=follow_up.decision, reason=follow_up.reason, escalated=False, policy_rule=None)

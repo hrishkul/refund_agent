@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from pricing import calculate_cost
-from tools import get_customer_order, get_refund_policy
+from tools import POLICY_PATH, get_customer_order, get_refund_policy
 
 
 class AgentDecision(BaseModel):
@@ -44,10 +44,54 @@ class AgentState(TypedDict):
 
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o")
 
+
+def _is_policy_question(message: str) -> bool:
+    normalized = message.lower()
+    return "policy" in normalized and any(
+        term in normalized
+        for term in ("what", "explain", "tell", "give", "show", "send", "refund", "return")
+    )
+
+
+async def _answer_policy_question(message: str) -> AgentResult:
+    if not os.getenv("OPENAI_API_KEY"):
+        raise AgentUnavailableError("OPENAI_API_KEY is not configured")
+    llm = ChatOpenAI(model=MODEL_NAME, temperature=0)
+    policy = POLICY_PATH.read_text()
+    response = await llm.ainvoke(
+        [
+            SystemMessage(
+                content=(
+                    "You are Maya, a ShopEase customer service specialist. Answer the customer's policy "
+                    "question using only the policy text below. Give the actual policy details in natural, "
+                    "customer-facing language. Do not describe your action or say that you provided a summary.\n\n"
+                    f"Policy text:\n{policy}"
+                )
+            ),
+            HumanMessage(content=message),
+        ]
+    )
+    usage = getattr(response, "usage_metadata", None) or {}
+    return AgentResult(
+        decision="none",
+        reason=str(response.content),
+        escalated=False,
+        policy_rule=None,
+        model_used=MODEL_NAME,
+        prompt_tokens=int(usage.get("input_tokens", 0)),
+        completion_tokens=int(usage.get("output_tokens", 0)),
+    )
+
 SYSTEM_PROMPT = """
 You are Maya, a warm and professional customer service specialist at ShopEase.
 
-For general questions, greetings, or policy explanations, respond naturally without calling tools.
+For greetings and simple non-policy support questions, respond naturally without calling tools.
+For policy explanations or questions like "what is your policy", call get_refund_policy and answer from
+that policy text in customer-facing language. Do not say that you "provided" or "summarized" the policy;
+actually give the policy details.
+If the customer asks to escalate, speak to that request directly. If the current conversation has enough
+order or refund context, including a prior assistant message summarizing their latest order, set
+decision="escalated"; otherwise ask for the order or issue details with decision="none".
 For any refund, return, cancellation, exchange, defective, or damaged item request:
   1. Call get_customer_order to retrieve the customer's latest order details.
   2. Call get_refund_policy to retrieve the current policy rules.
@@ -70,6 +114,8 @@ When writing the 'reason' field:
 
 If the previous assistant message already gave a formal decision and the customer asks a follow-up,
 answer from context with decision=\"none\".
+Order details include is_returned and returned_at. Use those fields as the source of truth for whether the
+customer has returned the product.
 """
 
 
@@ -194,6 +240,20 @@ async def run_agent(
     customer_id: str, message: str, request_id: str, history: list[dict] | None = None
 ) -> AgentResult:
     start = time.perf_counter()
+    if _is_policy_question(message):
+        result = await _answer_policy_question(message)
+        result.latency_ms = int((time.perf_counter() - start) * 1000)
+        result.cost_usd = calculate_cost(result.prompt_tokens, result.completion_tokens, MODEL_NAME)
+        langfuse_context.update_current_observation(
+            metadata={
+                "customer_id": customer_id,
+                "request_id": request_id,
+                "decision": result.decision,
+                "policy_rule_triggered": result.policy_rule,
+            }
+        )
+        return result
+
     final_state = await _run_graph(customer_id, message, history)
     decision = _extract_decision_from_state(final_state)
     order_details = final_state.get("order_details", {})
