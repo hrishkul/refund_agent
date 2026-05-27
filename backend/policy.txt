@@ -1,6 +1,111 @@
-1. Items marked Final Sale cannot be refunded under any circumstances
-2. Refund requests must be submitted within 30 days of purchase (45 days for premium customers)
-3. Refunds over $500 require human escalation
-4. Damaged or defective items are eligible for full refund within 60 days
-5. Digital products are non-refundable after download
-6. Orders already shipped cannot be cancelled, only returned after delivery
+SHOPEASE E-COMMERCE PLATFORM
+CUSTOMER REFUND & RETURNS POLICY
+Version 3.2  |  Effective Date: January 1, 2026
+Review Cycle: Annual  |  Policy Owner: Customer Experience & Operations
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. SCOPE AND PURPOSE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+This policy governs all refund, return, exchange, and cancellation
+requests processed through the ShopEase platform. It applies to all
+customers across Standard and Premium tiers. Any exceptions require
+written approval from a Senior Operations Manager.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2. CORE REFUND RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Rule 1 — Final Sale Items
+Items explicitly marked as "Final Sale" at the time of purchase are
+non-refundable and non-exchangeable under any circumstances, including
+customer remorse, sizing issues, or change of preference. This
+restriction cannot be waived by any support agent or system.
+
+Rule 2 — Return Window
+Refund requests must be submitted within 30 calendar days of the
+original purchase date. Customers enrolled in the ShopEase Premium
+Membership program are entitled to an extended window of 45 calendar
+days. Requests received after the applicable window will be
+automatically denied without exception.
+
+Rule 3 — High-Value Escalation Threshold
+All refund requests where the order total exceeds $500.00 USD must be
+escalated to a human Senior Support Agent for manual review and
+approval. Automated systems may not approve or deny these requests.
+The escalation target response time is 24 business hours.
+
+Rule 4 — Defective or Damaged Merchandise
+Items confirmed as defective, damaged in transit, or materially
+mis-described are eligible for a full refund or replacement at the
+customer's choice, provided the claim is raised within 60 calendar
+days of delivery. Supporting evidence (photo or video) may be
+requested by the support agent.
+
+Rule 5 — Digital Products
+Digital goods (software, templates, e-books, downloadable content)
+are non-refundable once the download has been initiated or the
+license key has been redeemed. If a download has not been initiated,
+a full refund may be issued within 7 days of purchase.
+
+Rule 6 — In-Transit Orders and Cancellations
+Orders that have been shipped but not yet delivered cannot be
+cancelled or immediately refunded. The customer must wait for
+delivery and then initiate a standard return. Orders in "pending" or
+"processing" status may be cancelled for a full refund at no penalty.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3. EXTENDED POLICY RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Rule 7 — Gift Orders
+Orders placed as gifts (where the purchaser and recipient differ) are
+eligible for store credit only, not cash or card refunds, unless the
+item is confirmed defective under Rule 4. Gift refunds cannot exceed
+the original purchase price. The gift recipient may initiate the
+return; the store credit will be issued to the original purchaser's
+account. The standard return window (Rule 2) applies.
+
+Rule 8 — Holiday Extended Return Window
+Orders placed between November 15 and December 31 of any calendar
+year qualify for an extended return deadline of January 31 of the
+following year, regardless of Standard or Premium membership status.
+This extension applies only to the return window; all other rules
+(Final Sale, Digital, High-Value Escalation) remain in full effect.
+The holiday window cannot be combined with the Premium 45-day window;
+whichever deadline is later applies.
+
+Rule 9 — Partial Refunds and Quantity Discrepancies
+Where an order contains multiple units of the same item and only a
+subset is being returned, a partial refund proportional to the
+returned quantity will be issued. The per-unit refund amount is
+calculated as: (original order total) / (quantity ordered) * (quantity
+returned). Partial refunds on orders exceeding $500 total still
+require human escalation per Rule 3. Partial refunds on Final Sale
+items are not permitted per Rule 1.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4. REFUND PROCESSING TIMELINES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Approved refunds are processed to the original payment method within
+5–7 business days. Store credit is applied instantly. Escalated cases
+targeting human review are resolved within 24 business hours.
+ShopEase is not liable for additional processing delays imposed by
+the customer's bank or card network.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+5. DISPUTES AND CHARGEBACKS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Customers who initiate a chargeback with their payment provider while
+a ShopEase refund request is under review will have their active
+request automatically closed. ShopEase will contest chargebacks
+where the refund was denied in accordance with this policy.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+6. POLICY ENFORCEMENT AND AMENDMENTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+This policy is enforced automatically by the ShopEase AI support
+system. No support agent, automated or human, may approve a refund
+that violates Rules 1, 5, or 6. Rules 3, 7, 8, and 9 may be
+overridden only by a Senior Operations Manager with written
+justification. ShopEase reserves the right to amend this policy with
+30 days' notice published on the platform.

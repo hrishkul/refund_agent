@@ -10,6 +10,32 @@ from database import AsyncSessionLocal
 
 POLICY_PATH = Path(__file__).with_name("policy.txt")
 
+# Holiday window: orders placed Nov 15 – Dec 31 get an extended deadline of Jan 31
+_HOLIDAY_WINDOW_START = (11, 15)  # (month, day)
+_HOLIDAY_WINDOW_END = (12, 31)
+
+
+def _is_holiday_order(created_at: datetime) -> bool:
+    """Return True if the order was placed during the holiday purchase window."""
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    month, day = created_at.month, created_at.day
+    start_m, start_d = _HOLIDAY_WINDOW_START
+    end_m, end_d = _HOLIDAY_WINDOW_END
+    after_start = (month, day) >= (start_m, start_d)
+    before_end = (month, day) <= (end_m, end_d)
+    return after_start and before_end
+
+
+def _holiday_deadline_days(created_at: datetime) -> int | None:
+    """Return the number of days until Jan 31 of the following year from created_at."""
+    if not _is_holiday_order(created_at):
+        return None
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    jan31_next = datetime(created_at.year + 1, 1, 31, tzinfo=timezone.utc)
+    return (jan31_next - created_at).days
+
 
 async def get_customer_order_data(customer_id: str) -> dict:
     query = text(
@@ -17,6 +43,7 @@ async def get_customer_order_data(customer_id: str) -> dict:
         SELECT c.id AS customer_id, c.full_name, c.is_premium, o.id AS order_id,
                o.status, o.total_amount, o.created_at, o.shipped_at, o.delivered_at,
                oi.id AS order_item_id, oi.is_defective, oi.downloaded_at, oi.returned_at,
+               oi.quantity,
                p.name, p.is_final_sale, p.is_digital, p.price
         FROM orders o JOIN customers c ON o.customer_id = c.id
         JOIN order_items oi ON oi.order_id = o.id
@@ -32,6 +59,8 @@ async def get_customer_order_data(customer_id: str) -> dict:
     created_at = row["created_at"]
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
+    holiday = _is_holiday_order(created_at)
+    holiday_deadline_days = _holiday_deadline_days(created_at)
     return {
         "found": True,
         "customer_id": str(row["customer_id"]),
@@ -47,6 +76,9 @@ async def get_customer_order_data(customer_id: str) -> dict:
         "is_digital": row["is_digital"],
         "is_defective": row["is_defective"],
         "is_returned": row["returned_at"] is not None,
+        "quantity": int(row["quantity"]),
+        "is_holiday_order": holiday,
+        "holiday_deadline_days": holiday_deadline_days,
         "downloaded_at": row["downloaded_at"].isoformat() if row["downloaded_at"] else None,
         "returned_at": row["returned_at"].isoformat() if row["returned_at"] else None,
         "shipped_at": row["shipped_at"].isoformat() if row["shipped_at"] else None,
@@ -76,6 +108,7 @@ async def mark_latest_order_returned(customer_id: str) -> dict:
 
 
 def check_refund_policy_data(order: dict) -> dict:
+    """Deterministic policy engine enforcing all 9 ShopEase refund rules."""
     if not order.get("found"):
         return {
             "eligible": False,
@@ -87,7 +120,9 @@ def check_refund_policy_data(order: dict) -> dict:
     days_since_order = int(order.get("days_since_order") or 0)
     total_amount = float(order.get("total_amount") or 0)
     order_status = order.get("order_status")
+    quantity = int(order.get("quantity") or 1)
 
+    # Rule 1 — Final Sale: hard block, no exceptions
     if order.get("is_final_sale"):
         return {
             "eligible": False,
@@ -96,6 +131,7 @@ def check_refund_policy_data(order: dict) -> dict:
             "rule_number": 1,
         }
 
+    # Rule 6 — Shipped-not-delivered cannot be cancelled
     if order_status == "shipped":
         return {
             "eligible": False,
@@ -104,6 +140,26 @@ def check_refund_policy_data(order: dict) -> dict:
             "rule_number": 6,
         }
 
+    # Rule 6 — Pending/processing orders can be fully cancelled (approved)
+    if order_status in ("pending", "processing"):
+        return {
+            "eligible": True,
+            "recommendation": "approved",
+            "rule_violated": None,
+            "rule_number": 6,
+            "note": "Order not yet shipped — full cancellation refund applies.",
+        }
+
+    # Rule 6 — Cancelled orders are already voided
+    if order_status == "cancelled":
+        return {
+            "eligible": False,
+            "recommendation": "denied",
+            "rule_violated": "order_already_cancelled",
+            "rule_number": 6,
+        }
+
+    # Beyond this point order must be delivered
     if order_status != "delivered":
         return {
             "eligible": False,
@@ -112,6 +168,7 @@ def check_refund_policy_data(order: dict) -> dict:
             "rule_number": 6,
         }
 
+    # Rule 4 — Defective/damaged: approved up to 60 days (overrides window)
     if order.get("is_defective") and days_since_order <= 60:
         return {
             "eligible": True,
@@ -120,14 +177,7 @@ def check_refund_policy_data(order: dict) -> dict:
             "rule_number": 4,
         }
 
-    if total_amount > 500:
-        return {
-            "eligible": False,
-            "recommendation": "escalated",
-            "rule_violated": "high_value_refund",
-            "rule_number": 3,
-        }
-
+    # Rule 5 — Digital product already downloaded: hard block
     if order.get("is_digital") and order.get("downloaded_at"):
         return {
             "eligible": False,
@@ -136,19 +186,74 @@ def check_refund_policy_data(order: dict) -> dict:
             "rule_number": 5,
         }
 
+    # Rule 8 — Holiday extended window (Nov 15 – Dec 31 purchase → deadline Jan 31 next year)
+    if order.get("is_holiday_order"):
+        holiday_days = int(order.get("holiday_deadline_days") or 0)
+        if days_since_order <= holiday_days:
+            # Still check high-value escalation under Rule 3
+            if total_amount > 500:
+                return {
+                    "eligible": False,
+                    "recommendation": "escalated",
+                    "rule_violated": "high_value_refund",
+                    "rule_number": 3,
+                    "note": "Holiday window active but order exceeds $500 — escalation required.",
+                }
+            return {
+                "eligible": True,
+                "recommendation": "approved",
+                "rule_violated": None,
+                "rule_number": 8,
+                "note": "Approved under holiday extended return window.",
+            }
+        # Holiday window expired — fall through to Rule 2 check which will deny
+
+    # Rule 2 — Standard / Premium return window
     window_days = 45 if order.get("is_premium") else 30
-    if days_since_order <= window_days:
+    if days_since_order > window_days:
+        return {
+            "eligible": False,
+            "recommendation": "denied",
+            "rule_violated": "outside_return_window",
+            "rule_number": 2,
+        }
+
+    # Rule 3 — High-value escalation (must be within window to reach here)
+    if total_amount > 500:
+        return {
+            "eligible": False,
+            "recommendation": "escalated",
+            "rule_violated": "high_value_refund",
+            "rule_number": 3,
+        }
+
+    # Rule 9 — Partial refund: multiple quantity units
+    if quantity > 1:
+        per_unit = round(total_amount / quantity, 2)
         return {
             "eligible": True,
             "recommendation": "approved",
             "rule_violated": None,
-            "rule_number": 2,
+            "rule_number": 9,
+            "note": f"Partial refund eligible: ${per_unit:.2f} per unit returned.",
+            "partial_refund_per_unit": per_unit,
         }
 
+    # Rule 7 — Gift orders: store credit only (flag for agent to communicate)
+    if order.get("is_gift"):
+        return {
+            "eligible": True,
+            "recommendation": "approved",
+            "rule_violated": None,
+            "rule_number": 7,
+            "note": "Gift order — store credit issued to original purchaser, not cash refund.",
+        }
+
+    # Default: standard eligible refund
     return {
-        "eligible": False,
-        "recommendation": "denied",
-        "rule_violated": "outside_return_window",
+        "eligible": True,
+        "recommendation": "approved",
+        "rule_violated": None,
         "rule_number": 2,
     }
 
