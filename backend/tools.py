@@ -52,51 +52,13 @@ async def get_customer_order_data(customer_id: str) -> dict:
     }
 
 
-def check_refund_policy_data(order_details: dict) -> dict:
-    POLICY_PATH.read_text()
-    if not order_details.get("found"):
-        return {
-            "eligible": False,
-            "recommendation": "denied",
-            "rule_violated": "customer_not_found",
-            "rule_number": None,
-        }
-
-    if "days_since_order" in order_details:
-        age_days = int(order_details["days_since_order"])
-    else:
-        created_at = datetime.fromisoformat(str(order_details["created_at"]).replace("Z", "+00:00"))
-        if created_at.tzinfo is None:
-            created_at = created_at.replace(tzinfo=timezone.utc)
-        age_days = (datetime.now(timezone.utc) - created_at).days
-    total_amount = float(order_details["total_amount"])
-    order_status = order_details.get("order_status") or order_details.get("status")
-
-    if order_details.get("is_final_sale"):
-        return {"eligible": False, "recommendation": "denied", "rule_violated": "final_sale", "rule_number": 1}
-    if order_details.get("is_defective") and age_days <= 60:
-        return {"eligible": True, "recommendation": "approved", "rule_violated": None, "rule_number": None}
-    if total_amount > 500:
-        return {"eligible": False, "recommendation": "escalated", "rule_violated": "high_value_refund", "rule_number": 3}
-    if order_details.get("is_digital") and order_details.get("downloaded_at"):
-        return {"eligible": False, "recommendation": "denied", "rule_violated": "downloaded_digital_product", "rule_number": 5}
-    return_window = 45 if order_details.get("is_premium") else 30
-    if age_days > return_window:
-        return {"eligible": False, "recommendation": "denied", "rule_violated": "outside_return_window", "rule_number": 2}
-    if order_status == "shipped" and not order_details.get("delivered_at"):
-        return {"eligible": False, "recommendation": "denied", "rule_violated": "shipped_not_delivered", "rule_number": 6}
-    if order_status != "delivered":
-        return {"eligible": False, "recommendation": "denied", "rule_violated": "order_not_delivered", "rule_number": None}
-    return {"eligible": True, "recommendation": "approved", "rule_violated": None, "rule_number": None}
-
-
 @tool
-async def get_customer_order(customer_id: Annotated[str, "Customer UUID"]) -> dict:
+async def get_customer_order(customer_id: Annotated[str, "Customer UUID or email prefix"]) -> dict:
     """Fetch the latest customer order with product and item details."""
     return await get_customer_order_data(customer_id)
 
 
 @tool
-def check_refund_policy(order_details: Annotated[dict, "Order details from get_customer_order"]) -> dict:
-    """Evaluate order details against refund policy rules."""
-    return check_refund_policy_data(order_details)
+def get_refund_policy() -> str:
+    """Return the full ShopEase refund policy text so you can reason over it."""
+    return POLICY_PATH.read_text()

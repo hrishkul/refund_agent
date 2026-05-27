@@ -23,7 +23,7 @@ from models import Customer, Decision, RefundLog, RefundRequest, RefundStatus
 from pricing import calculate_cost
 from security import check_injection
 from seed import seed_data
-from tools import check_refund_policy_data, get_customer_order_data
+from tools import get_customer_order_data
 
 
 class ChatHistoryMessage(BaseModel):
@@ -210,8 +210,8 @@ def _follow_up_response(message: str, history: list[ChatHistoryMessage]) -> Agen
 def _has_pending_approval(history: list[ChatHistoryMessage]) -> bool:
     for item in reversed(history):
         if item.role == "agent":
-            text = item.text.lower()
-            return "please reply confirm" in text and "refund" in text
+            t = item.text.lower()
+            return "please reply confirm" in t and "refund" in t
     return False
 
 
@@ -238,40 +238,6 @@ def _approved_refund_response(message: str, history: list[ChatHistoryMessage]) -
         decision="none",
         reason="This refund has already been approved in this conversation. You should see it back on your original payment method within 5-7 business days.",
         model_used="conversation-memory",
-    )
-
-
-async def _confirmed_refund_result(customer_id: str) -> AgentResult:
-    order = await get_customer_order_data(customer_id)
-    policy = check_refund_policy_data(order)
-    recommendation = policy.get("recommendation", "denied")
-    amount = float(order.get("total_amount") or 0)
-    if recommendation == "approved" and amount > 0:
-        reason = f"Confirmed. Your refund of ${amount:.2f} for {order.get('product_name', 'your order')} has been approved and should return to your original payment method within 5-7 business days."
-        return AgentResult(
-            decision="approved",
-            reason=reason,
-            policy_rule="eligible_standard_refund",
-            escalated=False,
-            model_used="confirmation",
-            order_details=order,
-        )
-    if recommendation == "approved":
-        return AgentResult(
-            decision="escalated",
-            reason="I found the order is eligible, but I could not verify a valid refund amount. A senior ShopEase agent will review it within 24 hours.",
-            policy_rule="missing_refund_amount",
-            escalated=True,
-            model_used="confirmation",
-            order_details=order,
-        )
-    return AgentResult(
-        decision=recommendation,
-        reason="I rechecked the order before confirming and it is no longer eligible for automatic approval. A ShopEase agent will review the details.",
-        policy_rule=policy.get("rule_violated") or "policy_recheck_failed",
-        escalated=recommendation == "escalated",
-        model_used="confirmation",
-        order_details=order,
     )
 
 
@@ -305,6 +271,17 @@ async def _approval_confirmation_prompt(result: AgentResult, customer_id: str) -
         latency_ms=result.latency_ms,
         order_details=order,
     )
+
+
+async def _confirmed_refund_result(customer_id: str, request_id: str) -> AgentResult:
+    """Re-run the agent with a confirmation message so the LLM makes the final call."""
+    result = await run_agent(
+        customer_id,
+        "The customer has confirmed they want to proceed with the refund. Please finalize the approved refund.",
+        request_id,
+        history=None,
+    )
+    return result
 
 
 @asynccontextmanager
@@ -421,7 +398,7 @@ async def chat(payload: ChatRequest, request: Request, session: AsyncSession = D
         )
 
     if _has_pending_approval(payload.history) and _is_confirmation(payload.message):
-        result = await _confirmed_refund_result(effective_customer_id)
+        result = await _confirmed_refund_result(effective_customer_id, request_id)
         if result.decision != "none":
             await _save_refund_log(session, effective_customer_id, payload.message, result, request_id)
         return ChatResponse(decision=result.decision, reason=result.reason, escalated=result.escalated, policy_rule=result.policy_rule)
