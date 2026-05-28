@@ -10,5 +10,5 @@ loguru==0.7.3
 httpx==0.28.1
 tenacity==9.0.0
 slowapi==0.1.9
-openai==1.58.1
-openai-agents>=0.2.0
+openai>=2.0.0
+openai-agents==0.17.4
