@@ -78,6 +78,39 @@ def _is_policy_question(message: str) -> bool:
     )
 
 
+def _is_simple_greeting(message: str) -> bool:
+    normalized = message.strip().lower()
+    return normalized in {"hi", "hello", "hey", "hi there", "hello there", "hey there", "good morning", "good afternoon", "good evening"}
+
+
+async def _answer_simple_greeting(message: str) -> AgentResult:
+    if not os.getenv("OPENAI_API_KEY"):
+        raise AgentUnavailableError("OPENAI_API_KEY is not configured")
+    llm = ChatOpenAI(model=MODEL_NAME, temperature=0)
+    response = await llm.ainvoke(
+        [
+            SystemMessage(
+                content=(
+                    "You are Maya, a warm ShopEase customer service specialist. Reply naturally to the greeting "
+                    "and invite the customer to ask about an order, return, refund, or policy. Do not describe "
+                    "the greeting or your action."
+                )
+            ),
+            HumanMessage(content=message),
+        ]
+    )
+    usage = getattr(response, "usage_metadata", None) or {}
+    return AgentResult(
+        decision="none",
+        reason=str(response.content),
+        escalated=False,
+        policy_rule=None,
+        model_used=MODEL_NAME,
+        prompt_tokens=int(usage.get("input_tokens", 0)),
+        completion_tokens=int(usage.get("output_tokens", 0)),
+    )
+
+
 async def _answer_policy_question(message: str) -> AgentResult:
     if not os.getenv("OPENAI_API_KEY"):
         raise AgentUnavailableError("OPENAI_API_KEY is not configured")
@@ -287,6 +320,20 @@ async def run_agent(
     customer_id: str, message: str, request_id: str, history: list[dict] | None = None
 ) -> AgentResult:
     start = time.perf_counter()
+    if _is_simple_greeting(message):
+        result = await _answer_simple_greeting(message)
+        result.latency_ms = int((time.perf_counter() - start) * 1000)
+        result.cost_usd = calculate_cost(result.prompt_tokens, result.completion_tokens, MODEL_NAME)
+        langfuse_context.update_current_observation(
+            metadata={
+                "customer_id": customer_id,
+                "request_id": request_id,
+                "decision": result.decision,
+                "policy_rule_triggered": result.policy_rule,
+            }
+        )
+        return result
+
     if _is_policy_question(message):
         result = await _answer_policy_question(message)
         result.latency_ms = int((time.perf_counter() - start) * 1000)

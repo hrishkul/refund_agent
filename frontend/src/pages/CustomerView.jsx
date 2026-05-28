@@ -1,6 +1,5 @@
-import { Link } from "react-router-dom";
 import { useMemo, useState } from "react";
-import { ArrowUpRight, ChevronDown, PackageCheck, RefreshCcw } from "lucide-react";
+import { ChevronDown, PackageCheck, RefreshCcw } from "lucide-react";
 import ChatWindow from "../components/ChatWindow.jsx";
 
 const customers = {
@@ -178,14 +177,16 @@ export default function CustomerView() {
   const visibleOrders = useMemo(() => orders.filter((order) => order.id === customerId), [customerId]);
   const displayedOrders = visibleOrders.length ? visibleOrders : orders.slice(0, 4);
 
-  async function submitMessage(messageText) {
-    if (!customerId.trim() || !messageText.trim() || loading) return;
+  async function submitMessage(messageText, customerOverride = null, historyOverride = null) {
+    const currentCustomerId = customerOverride || customerId;
+    if (!currentCustomerId.trim() || !messageText.trim() || loading) return;
     const trimmedInput = messageText.trim();
     const normalizedMessageId = /^c[o0]{2}\d$/i.test(trimmedInput) ? `C00${trimmedInput.slice(-1)}` : null;
-    const effectiveCustomerId = normalizedMessageId || customerId.trim();
+    const effectiveCustomerId = normalizedMessageId || currentCustomerId.trim();
     if (normalizedMessageId) setCustomerId(normalizedMessageId);
     const userMessage = { id: crypto.randomUUID(), role: "user", text: trimmedInput };
-    const history = messages.map(({ role, text, decision }) => ({ role, text, decision: decision || null }));
+    const sourceHistory = historyOverride || messages;
+    const history = sourceHistory.map(({ role, text, decision }) => ({ role, text, decision: decision || null }));
     setMessages((current) => [...current, userMessage]);
     setInput("");
     setLoading(true);
@@ -222,24 +223,29 @@ export default function CustomerView() {
 
   function selectOrder(order) {
     setCustomerId(order.id);
+    setMessages([]);
     setInput(`show my orders`);
   }
 
   function requestRefund(order) {
     setCustomerId(order.id);
-    submitMessage(`I want to return my ${order.product}`);
+    setMessages([]);
+    submitMessage(`I want to return my ${order.product}`, order.id, []);
+  }
+
+  function changeCustomer(nextCustomerId) {
+    setCustomerId(nextCustomerId);
+    setInput("");
+    setMessages([]);
+    setLoading(false);
   }
 
   return (
     <div className="min-h-screen bg-[#f5f5f5] text-slate-950 lg:h-screen lg:overflow-hidden">
       <div className="flex min-h-screen flex-col lg:h-screen lg:flex-row">
         <section className="flex min-h-[58vh] flex-col lg:h-screen lg:w-[60%]">
-          <header className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-[#f5f5f5] px-5 py-5 sm:px-8">
+          <header className="flex shrink-0 items-center border-b border-slate-200 bg-[#f5f5f5] px-5 py-5 sm:px-8">
             <ShopEaseLogo />
-            <Link to="/admin" className="inline-flex h-9 items-center gap-1 rounded-full border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 shadow-sm transition hover:border-blue-200 hover:text-blue-700">
-              Admin
-              <ArrowUpRight className="h-4 w-4" />
-            </Link>
           </header>
 
           <div className="flex shrink-0 flex-col gap-4 px-5 py-5 sm:px-8">
@@ -252,7 +258,7 @@ export default function CustomerView() {
                 <span className="mb-1 block text-xs font-medium text-slate-500">Customer ID</span>
                 <select
                   value={customerId}
-                  onChange={(event) => setCustomerId(event.target.value)}
+                  onChange={(event) => changeCustomer(event.target.value)}
                   className="h-10 w-full appearance-none rounded-md border border-slate-200 bg-white px-3 pr-9 text-sm font-medium text-slate-800 shadow-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                 >
                   {Object.entries(customers).map(([id, name]) => (

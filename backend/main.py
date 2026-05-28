@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agent import AgentResult, run_agent
 from database import AsyncSessionLocal, get_db, init_db
 from logger import log_decision, new_request_id, set_request_id, setup_logger
-from models import Customer, Decision, RefundLog, RefundRequest, RefundStatus
+from models import ChatTrace, Customer, Decision, RefundLog, RefundRequest, RefundStatus
 from pricing import calculate_cost
 from security import check_injection
 from seed import seed_data
@@ -50,6 +50,8 @@ class TraceResponse(BaseModel):
     timestamp: str
     customer_id: str
     customer_name: str
+    user_message: str
+    agent_response: str
     decision: str
     policy_rule: str | None
     model_used: str | None
@@ -329,7 +331,7 @@ async def _confirmed_refund_result(customer_id: str) -> AgentResult:
             reason=reason,
             policy_rule="eligible_standard_refund",
             escalated=False,
-            model_used="confirmation",
+            model_used="policy-engine",
             order_details=order,
         )
     if recommendation == "approved":
@@ -338,7 +340,7 @@ async def _confirmed_refund_result(customer_id: str) -> AgentResult:
             reason="I found the order is eligible, but I could not verify a valid refund amount. A senior ShopEase agent will review it within 24 hours.",
             policy_rule="missing_refund_amount",
             escalated=True,
-            model_used="confirmation",
+            model_used="policy-engine",
             order_details=order,
         )
     return AgentResult(
@@ -346,7 +348,7 @@ async def _confirmed_refund_result(customer_id: str) -> AgentResult:
         reason="I rechecked the order before confirming and it is no longer eligible for automatic approval. A ShopEase agent will review the details.",
         policy_rule=policy.get("rule_violated") or "policy_recheck_failed",
         escalated=recommendation == "escalated",
-        model_used="confirmation",
+        model_used="policy-engine",
         order_details=order,
     )
 
@@ -463,6 +465,68 @@ async def _save_refund_log(
     )
 
 
+async def _save_chat_trace(
+    session: AsyncSession,
+    customer_id: str,
+    message: str,
+    result: AgentResult,
+    request_id: str,
+) -> None:
+    order = result.order_details or {}
+    stored_customer_id = None
+    customer_label = customer_id
+    if order.get("found"):
+        stored_customer_id = uuid.UUID(str(order["customer_id"]))
+        customer_label = str(order.get("customer_name") or customer_id)
+    else:
+        normalized = _normalize_customer_code(customer_id)
+        customer = await session.scalar(
+            select(Customer).where(Customer.email.ilike(f"{normalized.lower()}@%"))
+        )
+        if customer:
+            stored_customer_id = customer.id
+            customer_label = customer.full_name
+
+    session.add(
+        ChatTrace(
+            id=uuid.uuid4(),
+            request_id=request_id,
+            customer_id=stored_customer_id,
+            customer_label=customer_label,
+            user_message=message,
+            agent_response=result.reason,
+            decision=None if result.decision == "none" else result.decision,
+            policy_rule=result.policy_rule,
+            escalated=result.escalated,
+            model_used=result.model_used,
+            prompt_tokens=result.prompt_tokens,
+            completion_tokens=result.completion_tokens,
+            cost_usd=Decimal(str(round(result.cost_usd, 8))),
+            latency_ms=result.latency_ms,
+        )
+    )
+    await session.commit()
+
+
+async def _chat_response(
+    session: AsyncSession,
+    customer_id: str,
+    message: str,
+    result: AgentResult,
+    request_id: str,
+    save_refund: bool = False,
+) -> ChatResponse:
+    if save_refund and result.decision != "none":
+        await _save_refund_log(session, customer_id, message, result, request_id)
+    await _save_chat_trace(session, customer_id, message, result, request_id)
+    return ChatResponse(
+        decision=result.decision,
+        reason=result.reason,
+        escalated=result.escalated,
+        policy_rule=result.policy_rule,
+    )
+
+
 @app.post("/chat", response_model=ChatResponse)
 @limiter.limit("10/minute")
 async def chat(payload: ChatRequest, request: Request, session: AsyncSession = Depends(get_db)):
@@ -479,43 +543,49 @@ async def chat(payload: ChatRequest, request: Request, session: AsyncSession = D
             model_used="security-filter",
             order_details=order,
         )
-        await _save_refund_log(session, effective_customer_id, payload.message, result, request_id)
-        return ChatResponse(decision=result.decision, reason=result.reason, escalated=False, policy_rule=result.policy_rule)
+        return await _chat_response(session, effective_customer_id, payload.message, result, request_id, save_refund=True)
 
     if _is_return_update(payload.message):
         result = await _return_update_response(effective_customer_id)
-        return ChatResponse(decision=result.decision, reason=result.reason, escalated=False, policy_rule=None)
+        return await _chat_response(session, effective_customer_id, payload.message, result, request_id)
 
     if _wants_return_status(payload.message):
         result = await _return_status_response(effective_customer_id)
-        return ChatResponse(decision=result.decision, reason=result.reason, escalated=False, policy_rule=None)
+        return await _chat_response(session, effective_customer_id, payload.message, result, request_id)
 
     if follow_up := _follow_up_response(payload.message, payload.history):
-        return ChatResponse(decision=follow_up.decision, reason=follow_up.reason, escalated=False, policy_rule=None)
+        return await _chat_response(session, effective_customer_id, payload.message, follow_up, request_id)
 
     if already_approved := _approved_refund_response(payload.message, payload.history):
-        return ChatResponse(decision=already_approved.decision, reason=already_approved.reason, escalated=False, policy_rule=None)
+        return await _chat_response(session, effective_customer_id, payload.message, already_approved, request_id)
 
     if _has_pending_approval(payload.history) and _is_decline(payload.message):
-        return ChatResponse(
+        result = AgentResult(
             decision="none",
             reason="No problem. I won't issue that refund. If you change your mind, you can ask me to check the return again.",
             escalated=False,
+            model_used="conversation-memory",
             policy_rule=None,
         )
+        return await _chat_response(session, effective_customer_id, payload.message, result, request_id)
 
     if _has_pending_approval(payload.history) and _is_confirmation(payload.message):
         result = await _confirmed_refund_result(effective_customer_id)
-        if result.decision != "none":
-            await _save_refund_log(session, effective_customer_id, payload.message, result, request_id)
-        return ChatResponse(decision=result.decision, reason=result.reason, escalated=result.escalated, policy_rule=result.policy_rule)
+        return await _chat_response(session, effective_customer_id, payload.message, result, request_id, save_refund=True)
 
     if _wants_order_lookup(payload.message) or _is_customer_id_only(payload.message):
         result = await _order_lookup_response(effective_customer_id)
-        return ChatResponse(decision=result.decision, reason=result.reason, escalated=False, policy_rule=None)
+        return await _chat_response(session, effective_customer_id, payload.message, result, request_id)
 
     if _is_off_topic(payload.message):
-        return ChatResponse(decision="none", reason=OFF_TOPIC_MESSAGE, escalated=False, policy_rule=None)
+        result = AgentResult(
+            decision="none",
+            reason=OFF_TOPIC_MESSAGE,
+            escalated=False,
+            model_used="topic-filter",
+            policy_rule=None,
+        )
+        return await _chat_response(session, effective_customer_id, payload.message, result, request_id)
 
     try:
         result = await run_agent(
@@ -536,38 +606,36 @@ async def chat(payload: ChatRequest, request: Request, session: AsyncSession = D
         )
     if result.decision == "approved":
         result = await _approval_confirmation_prompt(result, effective_customer_id)
-    if result.decision != "none":
-        await _save_refund_log(session, effective_customer_id, payload.message, result, request_id)
-    return ChatResponse(decision=result.decision, reason=result.reason, escalated=result.escalated, policy_rule=result.policy_rule)
+    return await _chat_response(session, effective_customer_id, payload.message, result, request_id, save_refund=True)
 
 
 @app.get("/api/traces", response_model=list[TraceResponse])
 async def traces(session: AsyncSession = Depends(get_db)):
     stmt = (
-        select(RefundLog, RefundRequest, Customer)
-        .join(RefundRequest, RefundRequest.id == RefundLog.refund_request_id)
-        .join(Customer, Customer.id == RefundRequest.customer_id)
-        .order_by(desc(RefundLog.created_at))
-        .limit(20)
+        select(ChatTrace)
+        .order_by(desc(ChatTrace.created_at))
+        .limit(50)
     )
-    rows = (await session.execute(stmt)).all()
+    rows = (await session.execute(stmt)).scalars().all()
     response = []
-    for log, refund, customer in rows:
-        cost = calculate_cost(log.prompt_tokens, log.completion_tokens, log.model_used) if not log.cost_usd else float(log.cost_usd)
+    for trace in rows:
+        cost = calculate_cost(trace.prompt_tokens, trace.completion_tokens, trace.model_used) if not trace.cost_usd else float(trace.cost_usd)
         response.append(
             TraceResponse(
-                id=str(log.id),
-                timestamp=log.created_at.isoformat(),
-                customer_id=str(customer.id),
-                customer_name=customer.full_name,
-                decision=log.decision.value,
-                policy_rule=log.policy_rule,
-                model_used=log.model_used,
-                prompt_tokens=log.prompt_tokens,
-                completion_tokens=log.completion_tokens,
+                id=str(trace.id),
+                timestamp=trace.created_at.isoformat(),
+                customer_id=str(trace.customer_id or ""),
+                customer_name=trace.customer_label,
+                user_message=trace.user_message,
+                agent_response=trace.agent_response,
+                decision=trace.decision or "none",
+                policy_rule=trace.policy_rule,
+                model_used=trace.model_used,
+                prompt_tokens=trace.prompt_tokens,
+                completion_tokens=trace.completion_tokens,
                 cost_usd=cost,
-                latency_ms=log.agent_latency_ms,
-                status=refund.status.value,
+                latency_ms=trace.latency_ms,
+                status="escalated" if trace.escalated else "answered",
             )
         )
     return response

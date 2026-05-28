@@ -22,11 +22,13 @@ export default function AdminDashboard({ traces }) {
           <div className="p-10 text-center text-sm text-slate-500">No traces yet</div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[920px] text-left text-sm">
+            <table className="w-full min-w-[1180px] text-left text-sm">
               <thead className="bg-surface text-xs uppercase tracking-normal text-slate-500">
                 <tr>
                   <th className="px-4 py-3">Time</th>
                   <th className="px-4 py-3">Customer</th>
+                  <th className="px-4 py-3">Customer Message</th>
+                  <th className="px-4 py-3">Maya Response</th>
                   <th className="px-4 py-3">Decision</th>
                   <th className="px-4 py-3">Model</th>
                   <th className="px-4 py-3">Tokens</th>
@@ -41,10 +43,16 @@ export default function AdminDashboard({ traces }) {
                     <td className="px-4 py-3 text-slate-600">{new Date(trace.timestamp).toLocaleTimeString()}</td>
                     <td className="px-4 py-3">
                       <div className="font-medium text-ink">{trace.customer_name}</div>
-                      <div className="text-xs text-slate-500">{trace.customer_id.slice(0, 8)}</div>
+                      <div className="text-xs text-slate-500">{trace.customer_id ? trace.customer_id.slice(0, 8) : "unknown"}</div>
+                    </td>
+                    <td className="max-w-[220px] px-4 py-3 text-slate-600">
+                      <p className="line-clamp-3">{trace.user_message}</p>
+                    </td>
+                    <td className="max-w-[320px] px-4 py-3 text-slate-600">
+                      <p className="line-clamp-3">{trace.agent_response}</p>
                     </td>
                     <td className="px-4 py-3"><DecisionBadge decision={trace.decision} /></td>
-                    <td className="px-4 py-3 text-slate-600">{trace.model_used}</td>
+                    <td className="px-4 py-3 text-slate-600">{trace.model_used || "n/a"}</td>
                     <td className="px-4 py-3 text-slate-600">{(trace.prompt_tokens + trace.completion_tokens).toLocaleString()}</td>
                     <td className="px-4 py-3 text-slate-600">${trace.cost_usd.toFixed(6)}</td>
                     <td className="px-4 py-3 text-slate-600">{trace.latency_ms} ms</td>

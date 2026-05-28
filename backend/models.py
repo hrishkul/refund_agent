@@ -116,3 +116,23 @@ class RefundLog(Base):
     completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
     cost_usd: Mapped[Decimal] = mapped_column(Numeric(10, 8), default=Decimal("0"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ChatTrace(Base):
+    __tablename__ = "chat_traces"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    request_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    customer_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("customers.id"))
+    customer_label: Mapped[str] = mapped_column(String, nullable=False)
+    user_message: Mapped[str] = mapped_column(Text, nullable=False)
+    agent_response: Mapped[str] = mapped_column(Text, nullable=False)
+    decision: Mapped[str | None] = mapped_column(String)
+    policy_rule: Mapped[str | None] = mapped_column(String)
+    escalated: Mapped[bool] = mapped_column(Boolean, default=False)
+    model_used: Mapped[str | None] = mapped_column(String)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cost_usd: Mapped[Decimal] = mapped_column(Numeric(10, 8), default=Decimal("0"))
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
