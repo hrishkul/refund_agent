@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 
-from langchain_core.tools import tool
+from agents import RunContextWrapper, function_tool
 from sqlalchemy import text
 
 from database import AsyncSessionLocal
@@ -10,25 +10,20 @@ from database import AsyncSessionLocal
 
 POLICY_PATH = Path(__file__).with_name("policy.txt")
 
-# Holiday window: orders placed Nov 15 – Dec 31 get an extended deadline of Jan 31
-_HOLIDAY_WINDOW_START = (11, 15)  # (month, day)
+_HOLIDAY_WINDOW_START = (11, 15)
 _HOLIDAY_WINDOW_END = (12, 31)
 
 
 def _is_holiday_order(created_at: datetime) -> bool:
-    """Return True if the order was placed during the holiday purchase window."""
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
     month, day = created_at.month, created_at.day
     start_m, start_d = _HOLIDAY_WINDOW_START
     end_m, end_d = _HOLIDAY_WINDOW_END
-    after_start = (month, day) >= (start_m, start_d)
-    before_end = (month, day) <= (end_m, end_d)
-    return after_start and before_end
+    return (month, day) >= (start_m, start_d) and (month, day) <= (end_m, end_d)
 
 
 def _holiday_deadline_days(created_at: datetime) -> int | None:
-    """Return the number of days until Jan 31 of the following year from created_at."""
     if not _is_holiday_order(created_at):
         return None
     if created_at.tzinfo is None:
@@ -88,11 +83,8 @@ async def get_customer_order_data(customer_id: str) -> dict:
 
 async def mark_latest_order_returned(customer_id: str) -> dict:
     order = await get_customer_order_data(customer_id)
-    if not order.get("found"):
+    if not order.get("found") or order.get("is_returned"):
         return order
-    if order.get("is_returned"):
-        return order
-
     update = text(
         """
         UPDATE order_items
@@ -103,184 +95,115 @@ async def mark_latest_order_returned(customer_id: str) -> dict:
     async with AsyncSessionLocal() as session:
         await session.execute(update, {"order_item_id": order["order_item_id"]})
         await session.commit()
-
     return await get_customer_order_data(customer_id)
 
 
 def check_refund_policy_data(order: dict) -> dict:
     """Deterministic policy engine enforcing all 9 ShopEase refund rules."""
     if not order.get("found"):
-        return {
-            "eligible": False,
-            "recommendation": "denied",
-            "rule_violated": "order_not_found",
-            "rule_number": None,
-        }
+        return {"eligible": False, "recommendation": "denied",
+                "rule_violated": "order_not_found", "rule_number": None}
 
     days_since_order = int(order.get("days_since_order") or 0)
     total_amount = float(order.get("total_amount") or 0)
     order_status = order.get("order_status")
     quantity = int(order.get("quantity") or 1)
 
-    # Rule 1 — Final Sale: hard block, no exceptions
     if order.get("is_final_sale"):
-        return {
-            "eligible": False,
-            "recommendation": "denied",
-            "rule_violated": "final_sale",
-            "rule_number": 1,
-        }
+        return {"eligible": False, "recommendation": "denied",
+                "rule_violated": "final_sale", "rule_number": 1}
 
-    # Rule 6 — Shipped-not-delivered cannot be cancelled
     if order_status == "shipped":
-        return {
-            "eligible": False,
-            "recommendation": "denied",
-            "rule_violated": "shipped_not_delivered",
-            "rule_number": 6,
-        }
+        return {"eligible": False, "recommendation": "denied",
+                "rule_violated": "shipped_not_delivered", "rule_number": 6}
 
-    # Rule 6 — Pending/processing orders can be fully cancelled (approved)
     if order_status in ("pending", "processing"):
-        return {
-            "eligible": True,
-            "recommendation": "approved",
-            "rule_violated": None,
-            "rule_number": 6,
-            "note": "Order not yet shipped — full cancellation refund applies.",
-        }
+        return {"eligible": True, "recommendation": "approved", "rule_violated": None,
+                "rule_number": 6, "note": "Order not yet shipped — full cancellation refund applies."}
 
-    # Rule 6 — Cancelled orders are already voided
     if order_status == "cancelled":
-        return {
-            "eligible": False,
-            "recommendation": "denied",
-            "rule_violated": "order_already_cancelled",
-            "rule_number": 6,
-        }
+        return {"eligible": False, "recommendation": "denied",
+                "rule_violated": "order_already_cancelled", "rule_number": 6}
 
-    # Beyond this point order must be delivered
     if order_status != "delivered":
-        return {
-            "eligible": False,
-            "recommendation": "denied",
-            "rule_violated": "not_delivered",
-            "rule_number": 6,
-        }
+        return {"eligible": False, "recommendation": "denied",
+                "rule_violated": "not_delivered", "rule_number": 6}
 
-    # Rule 4 — Defective/damaged: approved up to 60 days (overrides window)
     if order.get("is_defective") and days_since_order <= 60:
-        return {
-            "eligible": True,
-            "recommendation": "approved",
-            "rule_violated": None,
-            "rule_number": 4,
-        }
+        return {"eligible": True, "recommendation": "approved",
+                "rule_violated": None, "rule_number": 4}
 
-    # Rule 5 — Digital product already downloaded: hard block
     if order.get("is_digital") and order.get("downloaded_at"):
-        return {
-            "eligible": False,
-            "recommendation": "denied",
-            "rule_violated": "downloaded_digital_product",
-            "rule_number": 5,
-        }
+        return {"eligible": False, "recommendation": "denied",
+                "rule_violated": "downloaded_digital_product", "rule_number": 5}
 
-    # Rule 8 — Holiday extended window (Nov 15 – Dec 31 purchase → deadline Jan 31 next year)
     if order.get("is_holiday_order"):
         holiday_days = int(order.get("holiday_deadline_days") or 0)
         if days_since_order <= holiday_days:
             if total_amount > 500:
-                return {
-                    "eligible": False,
-                    "recommendation": "escalated",
-                    "rule_violated": "high_value_refund",
-                    "rule_number": 3,
-                    "note": "Holiday window active but order exceeds $500 — escalation required.",
-                }
-            return {
-                "eligible": True,
-                "recommendation": "approved",
-                "rule_violated": None,
-                "rule_number": 8,
-                "note": "Approved under holiday extended return window.",
-            }
-        # Holiday window expired — fall through to Rule 2 check which will deny
+                return {"eligible": False, "recommendation": "escalated",
+                        "rule_violated": "high_value_refund", "rule_number": 3,
+                        "note": "Holiday window active but order exceeds $500 — escalation required."}
+            return {"eligible": True, "recommendation": "approved", "rule_violated": None,
+                    "rule_number": 8, "note": "Approved under holiday extended return window."}
 
-    # Rule 2 — Standard / Premium return window
     window_days = 45 if order.get("is_premium") else 30
     if days_since_order > window_days:
-        return {
-            "eligible": False,
-            "recommendation": "denied",
-            "rule_violated": "outside_return_window",
-            "rule_number": 2,
-        }
+        return {"eligible": False, "recommendation": "denied",
+                "rule_violated": "outside_return_window", "rule_number": 2}
 
-    # Rule 3 — High-value escalation (must be within window to reach here)
     if total_amount > 500:
-        return {
-            "eligible": False,
-            "recommendation": "escalated",
-            "rule_violated": "high_value_refund",
-            "rule_number": 3,
-        }
+        return {"eligible": False, "recommendation": "escalated",
+                "rule_violated": "high_value_refund", "rule_number": 3}
 
-    # Rule 9 — Partial refund: multiple quantity units
     if quantity > 1:
         per_unit = round(total_amount / quantity, 2)
-        return {
-            "eligible": True,
-            "recommendation": "approved",
-            "rule_violated": None,
-            "rule_number": 9,
-            "note": f"Partial refund eligible: ${per_unit:.2f} per unit returned.",
-            "partial_refund_per_unit": per_unit,
-        }
+        return {"eligible": True, "recommendation": "approved", "rule_violated": None,
+                "rule_number": 9,
+                "note": f"Partial refund eligible: ${per_unit:.2f} per unit returned.",
+                "partial_refund_per_unit": per_unit}
 
-    # Rule 7 — Gift orders: store credit only (flag for agent to communicate)
     if order.get("is_gift"):
-        return {
-            "eligible": True,
-            "recommendation": "approved",
-            "rule_violated": None,
-            "rule_number": 7,
-            "note": "Gift order — store credit issued to original purchaser, not cash refund.",
-        }
+        return {"eligible": True, "recommendation": "approved", "rule_violated": None,
+                "rule_number": 7,
+                "note": "Gift order — store credit issued to original purchaser, not cash refund."}
 
-    # Default: standard eligible refund
-    return {
-        "eligible": True,
-        "recommendation": "approved",
-        "rule_violated": None,
-        "rule_number": 2,
-    }
+    return {"eligible": True, "recommendation": "approved",
+            "rule_violated": None, "rule_number": 2}
 
 
-@tool
+# ── SDK tools (single source of truth) ────────────────────────────────────────
+
+@function_tool
 async def get_customer_order(
-    customer_id: Annotated[str, "Customer UUID or email prefix"]
+    context: RunContextWrapper,
+    customer_id: Annotated[str, "Customer UUID or email prefix"],
 ) -> dict:
     """Fetch the customer's latest order with full product and item details."""
-    return await get_customer_order_data(customer_id)
+    order = await get_customer_order_data(customer_id)
+    if context and context.context is not None:
+        context.context.order_details = order
+    return order
 
 
-@tool
-def get_refund_policy() -> str:
+@function_tool
+async def get_refund_policy() -> str:
     """Return the full ShopEase refund policy text so you can reason over it."""
     return POLICY_PATH.read_text()
 
 
-@tool
+@function_tool
 async def check_refund_policy(
-    customer_id: Annotated[str, "Customer UUID or email prefix"]
+    context: RunContextWrapper,
+    customer_id: Annotated[str, "Customer UUID or email prefix"],
 ) -> dict:
     """
     Fetch the customer's latest order and run it through the deterministic
-    9-rule ShopEase policy engine. Returns a structured recommendation:
-    approved / denied / escalated, plus the rule number and any notes.
-    Always call this tool (alongside get_refund_policy) before making a
-    refund decision — never rely on reasoning alone.
+    9-rule ShopEase policy engine. Returns: approved / denied / escalated,
+    plus the rule number and any notes. Always call this alongside
+    get_customer_order before making a refund decision.
     """
     order = await get_customer_order_data(customer_id)
+    if context and context.context is not None:
+        context.context.order_details = order
     return check_refund_policy_data(order)
