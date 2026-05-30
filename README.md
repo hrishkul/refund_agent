@@ -19,8 +19,17 @@ cp .env.example .env
 
 Open `.env` and set your API key:
 
+```bash
+# Mac / Linux
+nano .env
+# Windows
+notepad .env
 ```
-OPENAI_API_KEY=sk-...
+
+The file should contain:
+
+```
+OPENAI_API_KEY=sk-your-key-here
 ```
 
 > **No API key?** The app starts and responds gracefully without `OPENAI_API_KEY` — every request is escalated to a human agent with a support handoff message instead of making a policy decision. Set the key to enable full LLM reasoning.
@@ -53,10 +62,12 @@ curl http://localhost/health
 
 ### 5. Open the app
 
+> **Note:** Navigate to these URLs directly in your browser — the admin dashboard is not linked from the chat UI.
+
 | URL | Description |
 | --- | --- |
-| http://localhost | Customer chat UI |
-| http://localhost/admin | Admin operations dashboard |
+| http://localhost:80 | Customer chat UI |
+| http://localhost:80/admin | Admin operations dashboard (open this separately) |
 | http://localhost:3000 | Langfuse observability (self-hosted) |
 
 Langfuse login: `admin@worknoon.local` / `worknoon-admin`
