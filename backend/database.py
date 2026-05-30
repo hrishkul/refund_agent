@@ -33,3 +33,4 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.execute(text("ALTER TABLE order_items ADD COLUMN IF NOT EXISTS returned_at TIMESTAMP WITH TIME ZONE"))
+        await conn.execute(text("ALTER TABLE chat_traces ADD COLUMN IF NOT EXISTS tool_calls JSONB NOT NULL DEFAULT '[]'"))

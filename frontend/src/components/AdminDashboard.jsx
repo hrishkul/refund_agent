@@ -56,10 +56,7 @@ function TraceExpand({ trace }) {
             </div>
           )}
           <div className="flex flex-wrap gap-4 text-xs text-slate-500">
-            <span>🪙 <strong className="text-ink">{(trace.prompt_tokens + trace.completion_tokens).toLocaleString()}</strong> tokens ({trace.prompt_tokens} in / {trace.completion_tokens} out)</span>
-            <span>💰 <strong className="text-ink">${trace.cost_usd.toFixed(6)}</strong></span>
-            <span>⏱ <strong className="text-ink">{trace.latency_ms} ms</strong></span>
-            <span>🤖 <strong className="text-ink">{trace.model_used || "n/a"}</strong></span>
+            <span><strong className="text-ink">{trace.prompt_tokens}</strong> in / <strong className="text-ink">{trace.completion_tokens}</strong> out</span>
           </div>
         </div>
       </div>
