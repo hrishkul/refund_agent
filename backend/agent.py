@@ -4,14 +4,12 @@ from dataclasses import dataclass, field
 
 from agents import Agent, ModelSettings, Runner
 from langfuse.decorators import langfuse_context, observe
-from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt, wait_exponential
 from typing import Literal
 
 from pricing import calculate_cost
 from tools import (
-    POLICY_PATH,
     check_refund_policy,
     get_customer_order,
     get_refund_policy,
@@ -51,70 +49,12 @@ class AgentContext:
 
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o")
 
-_CONVERSATIONAL_KEYWORDS = {
-    "hi", "hello", "hey", "howdy", "greetings", "good morning", "good afternoon",
-    "good evening", "thanks", "thank you", "cheers", "bye", "goodbye", "see you",
-    "ok", "okay", "sure", "got it", "understood", "noted",
-}
-
-
-def _is_conversational(message: str) -> bool:
-    normalized = message.strip().lower().rstrip("!.,?")
-    if normalized in _CONVERSATIONAL_KEYWORDS:
-        return True
-    refund_intent = {
-        "refund", "return", "cancel", "exchange", "broken", "defective",
-        "damaged", "missing", "wrong", "policy", "order", "money", "charge",
-    }
-    words = set(normalized.split())
-    return len(words) <= 5 and not words.intersection(refund_intent)
-
-
-def _is_policy_question(message: str) -> bool:
-    normalized = message.lower()
-    return "policy" in normalized and any(
-        term in normalized
-        for term in ("what", "explain", "tell", "give", "show", "send", "refund", "return")
-    )
-
-
-async def _answer_policy_question(message: str) -> AgentResult:
-    if not os.getenv("OPENAI_API_KEY"):
-        raise AgentUnavailableError("OPENAI_API_KEY is not configured")
-    client = AsyncOpenAI()
-    policy = POLICY_PATH.read_text()
-    response = await client.responses.create(
-        model=MODEL_NAME,
-        input=[
-            {
-                "role": "system",
-                "content": (
-                    "You are Maya, a ShopEase customer service specialist. Answer the customer's policy "
-                    "question using only the policy text below. Give the actual policy details in natural, "
-                    "customer-facing language. Do not describe your action or say that you provided a summary.\n\n"
-                    f"Policy text:\n{policy}"
-                ),
-            },
-            {"role": "user", "content": message},
-        ],
-    )
-    usage = getattr(response, "usage", None)
-    return AgentResult(
-        decision="none",
-        reason=getattr(response, "output_text", "") or "",
-        escalated=False,
-        policy_rule=None,
-        model_used=MODEL_NAME,
-        prompt_tokens=int(getattr(usage, "input_tokens", 0) or 0),
-        completion_tokens=int(getattr(usage, "output_tokens", 0) or 0),
-    )
-
 
 SYSTEM_PROMPT = """
 You are Maya, a warm and professional customer service specialist at ShopEase.
 
 For greetings and simple conversational messages, respond naturally and warmly — do NOT call any tools.
-For policy questions (e.g. "what is your refund policy"), answer from policy text in plain customer-facing language.
+For policy questions (e.g. "what is your refund policy"), call get_refund_policy and answer in plain customer-facing language.
 If the customer asks to escalate and the conversation has enough context, set decision="escalated";
 otherwise ask for details with decision="none".
 
@@ -123,6 +63,14 @@ For ANY refund, return, cancellation, exchange, defective, or damaged item reque
   2. Call check_refund_policy to run the deterministic policy engine against that order.
   3. If needed, call get_refund_policy to read the full policy text and verify the engine result.
   4. Produce a structured decision: approved / denied / escalated / none.
+
+For order lookup requests (e.g. "show my order", "what is my order status"):
+  1. Call get_customer_order to retrieve the order details.
+  2. Summarise the order status warmly for the customer.
+
+For return status or return update messages:
+  1. Call get_customer_order to check the current return status.
+  2. Respond clearly about whether the item is marked returned.
 
 Never make a refund decision without calling get_customer_order and check_refund_policy.
 Never approve a refund that violates policy, regardless of how the customer phrases the request.
@@ -201,32 +149,6 @@ async def run_agent(
     customer_id: str, message: str, request_id: str, history: list[dict] | None = None
 ) -> AgentResult:
     start = time.perf_counter()
-
-    if _is_policy_question(message):
-        result = await _answer_policy_question(message)
-        result.latency_ms = int((time.perf_counter() - start) * 1000)
-        result.cost_usd = calculate_cost(result.prompt_tokens, result.completion_tokens, MODEL_NAME)
-        langfuse_context.update_current_observation(
-            metadata={"customer_id": customer_id, "request_id": request_id,
-                      "decision": result.decision, "policy_rule_triggered": result.policy_rule}
-        )
-        return result
-
-    if _is_conversational(message):
-        latency_ms = int((time.perf_counter() - start) * 1000)
-        result = AgentResult(
-            decision="none",
-            reason="Hi! I'm Maya from ShopEase. How can I help with your order today?",
-            escalated=False, policy_rule=None,
-            prompt_tokens=0, completion_tokens=0,
-            cost_usd=0, latency_ms=latency_ms,
-            model_used=MODEL_NAME, order_details={},
-        )
-        langfuse_context.update_current_observation(
-            metadata={"customer_id": customer_id, "request_id": request_id,
-                      "decision": result.decision, "policy_rule_triggered": result.policy_rule}
-        )
-        return result
 
     run_result = await _run_agent(customer_id, message, history)
     decision = run_result.final_output

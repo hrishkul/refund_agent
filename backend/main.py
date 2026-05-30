@@ -23,7 +23,7 @@ from models import ChatTrace, Customer, Decision, RefundLog, RefundRequest, Refu
 from pricing import calculate_cost
 from security import check_injection
 from seed import seed_data
-from tools import check_refund_policy_data, get_customer_order_data, mark_latest_order_returned
+from tools import check_refund_policy_data, get_customer_order_data
 
 
 class ChatHistoryMessage(BaseModel):
@@ -63,68 +63,8 @@ class TraceResponse(BaseModel):
 
 
 BUSY_SUPPORT_MESSAGE = "Our favourite support agent seems busy. We'll connect you to someone else in a moment."
-OFF_TOPIC_MESSAGE = "I can help with ShopEase orders, refunds, returns, cancellations, exchanges, shipping, and policy questions. I can't help with unrelated topics."
 limiter = Limiter(key_func=get_remote_address)
 
-
-SHOP_TERMS = {
-    "shopease",
-    "order",
-    "refund",
-    "return",
-    "cancel",
-    "cancellation",
-    "exchange",
-    "replace",
-    "replacement",
-    "damaged",
-    "defective",
-    "broken",
-    "shipping",
-    "delivery",
-    "delivered",
-    "product",
-    "item",
-    "policy",
-    "payment",
-    "money",
-    "chargeback",
-    "escalate",
-    "escalted",
-    "escalated",
-    "escalating",
-    "escalation",
-    "human",
-    "agent",
-    "support",
-    "senior",
-    "senior agent",
-    "supervisor",
-    "manager",
-    "final sale",
-    "take it back",
-    "confirm",
-    "confirmed",
-    "yes",
-}
-
-OFF_TOPIC_TERMS = {
-    "president",
-    "prime minister",
-    "capital of",
-    "weather",
-    "sports",
-    "movie",
-    "recipe",
-    "stock price",
-    "news",
-    "election",
-    "bike",
-    "car",
-    "honda",
-}
-
-GREETING_TERMS = {"hi", "hello", "hey", "thanks", "thank you"}
 REFUND_TERMS = {"refund", "return", "cancel", "exchange", "replace", "take it back", "defective", "damaged", "broken"}
 
 
@@ -138,151 +78,6 @@ def _normalize_customer_code(value: str) -> str:
 def _message_customer_id(message: str) -> str | None:
     match = re.search(r"\bC[O0]{2}\d\b", message, flags=re.IGNORECASE)
     return _normalize_customer_code(match.group(0)) if match else None
-
-
-def _is_customer_id_only(message: str) -> bool:
-    return bool(re.fullmatch(r"\s*C[O0]{2}\d\s*", message, flags=re.IGNORECASE))
-
-
-def _is_off_topic(message: str) -> bool:
-    normalized = message.lower()
-    if any(term in normalized for term in SHOP_TERMS):
-        return False
-    if normalized.strip() in GREETING_TERMS or normalized.startswith(("hi ", "hello ", "hey ")):
-        return False
-    if _is_customer_id_only(message):
-        return False
-    if any(term in normalized for term in OFF_TOPIC_TERMS):
-        return True
-    if normalized.startswith(("who is ", "what is ", "name ", "tell me about ", "explain ")) and "policy" not in normalized:
-        return True
-    return len(normalized.split()) > 1
-
-
-def _wants_order_lookup(message: str) -> bool:
-    normalized = message.lower()
-    lookup_terms = ["show order", "show me order", "show orders", "my order", "order status", "list order"]
-    return any(term in normalized for term in lookup_terms) and not any(term in normalized for term in REFUND_TERMS)
-
-
-def _is_return_update(message: str) -> bool:
-    normalized = message.lower()
-    update_terms = [
-        "i returned it",
-        "i have returned it",
-        "i already returned",
-        "already returned it",
-        "returned the product",
-        "returned my product",
-        "sent it back",
-        "shipped it back",
-        "mailed it back",
-        "dropped it off",
-    ]
-    question_terms = ["did i", "have i", "has it", "is it", "?"]
-    return any(term in normalized for term in update_terms) and not any(term in normalized for term in question_terms)
-
-
-def _wants_return_status(message: str) -> bool:
-    normalized = message.lower()
-    status_terms = [
-        "have i returned",
-        "did i return",
-        "has it been returned",
-        "is it returned",
-        "returned it already",
-        "already returned",
-    ]
-    return any(term in normalized for term in status_terms)
-
-
-async def _order_lookup_response(customer_id: str) -> AgentResult:
-    order = await get_customer_order_data(customer_id)
-    if not order.get("found"):
-        return AgentResult(
-            decision="none",
-            reason="I couldn't find a recent ShopEase order for that customer ID. Please check the customer ID and try again.",
-            model_used="order-lookup",
-            order_details=order,
-        )
-    status = str(order.get("order_status", "unknown")).replace("_", " ")
-    delivered = f" delivered {order['days_since_order']} days ago" if order.get("order_status") == "delivered" else f" currently marked {status}"
-    return_status = " It is marked returned." if order.get("is_returned") else " It is not marked returned yet."
-    reason = f"Hi {order.get('customer_name', 'there')}. Your latest order is {order.get('product_name', 'an item')}, total ${float(order.get('total_amount') or 0):.2f},{delivered}.{return_status}"
-    return AgentResult(decision="none", reason=reason, model_used="order-lookup", order_details=order)
-
-
-async def _return_update_response(customer_id: str) -> AgentResult:
-    order = await mark_latest_order_returned(customer_id)
-    if not order.get("found"):
-        return AgentResult(
-            decision="none",
-            reason="I couldn't find a recent ShopEase order for that customer ID. Please check the customer ID and try again.",
-            model_used="return-update",
-            order_details=order,
-        )
-    returned_at = order.get("returned_at")
-    reason = f"Thanks, {order.get('customer_name', 'there')}. I've marked {order.get('product_name', 'your item')} as returned in your order record."
-    if returned_at:
-        reason += " Maya will use that return status when checking your refund."
-    return AgentResult(decision="none", reason=reason, model_used="return-update", order_details=order)
-
-
-async def _return_status_response(customer_id: str) -> AgentResult:
-    order = await get_customer_order_data(customer_id)
-    if not order.get("found"):
-        return AgentResult(
-            decision="none",
-            reason="I couldn't find a recent ShopEase order for that customer ID. Please check the customer ID and try again.",
-            model_used="return-status",
-            order_details=order,
-        )
-    if order.get("is_returned"):
-        reason = f"Yes. {order.get('product_name', 'Your item')} is marked as returned in your ShopEase order record."
-    else:
-        reason = f"I don't see {order.get('product_name', 'your item')} marked as returned in your ShopEase order record yet."
-    return AgentResult(decision="none", reason=reason, model_used="return-status", order_details=order)
-
-
-def _latest_formal_decision(history: list[ChatHistoryMessage]) -> ChatHistoryMessage | None:
-    for item in reversed(history):
-        if item.role == "agent" and item.decision in {"approved", "denied", "escalated"}:
-            return item
-    return None
-
-
-def _follow_up_response(message: str, history: list[ChatHistoryMessage]) -> AgentResult | None:
-    previous = _latest_formal_decision(history)
-    if not previous:
-        return None
-    normalized = message.lower()
-    follow_up_terms = [
-        "is it approved",
-        "was it approved",
-        "is my refund approved",
-        "when will i get",
-        "when do i get",
-        "what happens next",
-        "what does escalated mean",
-        "why was it denied",
-        "why denied",
-        "what does that mean",
-        "how long",
-        "have i returned",
-        "returned it already",
-        "did i return",
-        "already returned",
-        "has it been returned",
-    ]
-    if not any(term in normalized for term in follow_up_terms):
-        return None
-    if previous.decision == "approved":
-        reason = "Yes, your refund was approved. You should see it back on your original payment method within 5-7 business days."
-    elif previous.decision == "denied":
-        reason = previous.text if "sorry" in previous.text.lower() else f"That refund was denied. {previous.text}"
-    else:
-        reason = "Your return request has been escalated for senior review. I don't see a completed return confirmation here yet; a senior ShopEase agent will follow up within 24 hours."
-    return AgentResult(decision="none", reason=reason, model_used="conversation-memory")
 
 
 def _has_pending_approval(history: list[ChatHistoryMessage]) -> bool:
@@ -301,22 +96,6 @@ def _is_confirmation(message: str) -> bool:
 def _is_decline(message: str) -> bool:
     normalized = message.strip().lower()
     return normalized in {"decline", "cancel", "no", "no thanks", "do not", "don't", "stop", "never mind", "nevermind"}
-
-
-def _has_refund_intent(message: str) -> bool:
-    normalized = message.lower()
-    return any(term in normalized for term in REFUND_TERMS)
-
-
-def _approved_refund_response(message: str, history: list[ChatHistoryMessage]) -> AgentResult | None:
-    previous = _latest_formal_decision(history)
-    if not previous or previous.decision != "approved" or not _has_refund_intent(message):
-        return None
-    return AgentResult(
-        decision="none",
-        reason="This refund has already been approved in this conversation. You should see it back on your original payment method within 5-7 business days.",
-        model_used="conversation-memory",
-    )
 
 
 async def _confirmed_refund_result(customer_id: str) -> AgentResult:
@@ -533,6 +312,7 @@ async def chat(payload: ChatRequest, request: Request, session: AsyncSession = D
     injection = check_injection(payload.message)
     request_id = request.state.request_id
     effective_customer_id = _message_customer_id(payload.message) or _normalize_customer_code(payload.customer_id)
+
     if injection["flagged"]:
         order = await get_customer_order_data(effective_customer_id)
         result = AgentResult(
@@ -544,20 +324,6 @@ async def chat(payload: ChatRequest, request: Request, session: AsyncSession = D
             order_details=order,
         )
         return await _chat_response(session, effective_customer_id, payload.message, result, request_id, save_refund=True)
-
-    if _is_return_update(payload.message):
-        result = await _return_update_response(effective_customer_id)
-        return await _chat_response(session, effective_customer_id, payload.message, result, request_id)
-
-    if _wants_return_status(payload.message):
-        result = await _return_status_response(effective_customer_id)
-        return await _chat_response(session, effective_customer_id, payload.message, result, request_id)
-
-    if follow_up := _follow_up_response(payload.message, payload.history):
-        return await _chat_response(session, effective_customer_id, payload.message, follow_up, request_id)
-
-    if already_approved := _approved_refund_response(payload.message, payload.history):
-        return await _chat_response(session, effective_customer_id, payload.message, already_approved, request_id)
 
     if _has_pending_approval(payload.history) and _is_decline(payload.message):
         result = AgentResult(
@@ -572,20 +338,6 @@ async def chat(payload: ChatRequest, request: Request, session: AsyncSession = D
     if _has_pending_approval(payload.history) and _is_confirmation(payload.message):
         result = await _confirmed_refund_result(effective_customer_id)
         return await _chat_response(session, effective_customer_id, payload.message, result, request_id, save_refund=True)
-
-    if _wants_order_lookup(payload.message) or _is_customer_id_only(payload.message):
-        result = await _order_lookup_response(effective_customer_id)
-        return await _chat_response(session, effective_customer_id, payload.message, result, request_id)
-
-    if _is_off_topic(payload.message):
-        result = AgentResult(
-            decision="none",
-            reason=OFF_TOPIC_MESSAGE,
-            escalated=False,
-            model_used="topic-filter",
-            policy_rule=None,
-        )
-        return await _chat_response(session, effective_customer_id, payload.message, result, request_id)
 
     try:
         result = await run_agent(
