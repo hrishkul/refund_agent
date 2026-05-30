@@ -60,6 +60,7 @@ class TraceResponse(BaseModel):
     cost_usd: float
     latency_ms: int
     status: str
+    tool_calls: list[str] = Field(default_factory=list)
 
 
 BUSY_SUPPORT_MESSAGE = "Our favourite support agent seems busy. We'll connect you to someone else in a moment."
@@ -196,6 +197,7 @@ async def _save_chat_trace(
             completion_tokens=result.completion_tokens,
             cost_usd=Decimal(str(round(result.cost_usd, 8))),
             latency_ms=result.latency_ms,
+            tool_calls=result.tool_calls,
         )
     )
     await session.commit()
@@ -286,6 +288,7 @@ async def traces(session: AsyncSession = Depends(get_db)):
                 cost_usd=cost,
                 latency_ms=trace.latency_ms,
                 status="escalated" if trace.escalated else "answered",
+                tool_calls=trace.tool_calls or [],
             )
         )
     return response

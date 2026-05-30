@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text, func
+from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -135,4 +135,5 @@ class ChatTrace(Base):
     completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
     cost_usd: Mapped[Decimal] = mapped_column(Numeric(10, 8), default=Decimal("0"))
     latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    tool_calls: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
