@@ -4,6 +4,18 @@ import time
 import httpx
 
 
+# Fallback prices (per token) used when Langfuse is unreachable or unconfigured.
+# Update these if OpenAI changes pricing.
+_FALLBACK_PRICING: dict[str, dict[str, float]] = {
+    "gpt-4o":           {"input": 2.50 / 1_000_000, "output": 10.00 / 1_000_000},
+    "gpt-4o-mini":      {"input": 0.15 / 1_000_000, "output": 0.60 / 1_000_000},
+    "gpt-4-turbo":      {"input": 10.00 / 1_000_000, "output": 30.00 / 1_000_000},
+    "gpt-3.5-turbo":    {"input": 0.50 / 1_000_000, "output": 1.50 / 1_000_000},
+    "o1":               {"input": 15.00 / 1_000_000, "output": 60.00 / 1_000_000},
+    "o1-mini":          {"input": 3.00 / 1_000_000, "output": 12.00 / 1_000_000},
+    "o3-mini":          {"input": 1.10 / 1_000_000, "output": 4.40 / 1_000_000},
+}
+
 _cache = {"data": {}, "fetched_at": 0}
 
 
@@ -43,11 +55,24 @@ def fetch_pricing() -> dict:
     return _cache["data"]
 
 
+def _fallback_pricing(model_name: str) -> dict:
+    """Return hardcoded pricing for known models; fall back to gpt-4o rates."""
+    if model_name in _FALLBACK_PRICING:
+        return _FALLBACK_PRICING[model_name]
+    # Partial match — e.g. "gpt-4o-2024-11-20" → "gpt-4o"
+    for key in _FALLBACK_PRICING:
+        if key in model_name:
+            return _FALLBACK_PRICING[key]
+    return _FALLBACK_PRICING["gpt-4o"]
+
+
 def calculate_cost(prompt_tokens: int, completion_tokens: int, model: str | None = None) -> float:
     model_name = model or os.getenv("MODEL_NAME", "gpt-4o")
     pricing = fetch_pricing()
     model_data = pricing.get(model_name)
     if model_data is None:
-        model_data = pricing.get(next((key for key in pricing if key.lower() in model_name.lower()), None), {})
+        model_data = pricing.get(next((key for key in pricing if key.lower() in model_name.lower()), None), None)
+    if not model_data:
+        model_data = _fallback_pricing(model_name)
     cost = (prompt_tokens * model_data.get("input", 0)) + (completion_tokens * model_data.get("output", 0))
     return round(cost, 8)
