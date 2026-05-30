@@ -2,29 +2,27 @@ import { useState } from "react";
 import DecisionBadge from "./DecisionBadge.jsx";
 import StatCard from "./StatCard.jsx";
 
-const TOOL_CALL_STEPS = {
-  approved: [
-    { tool: "get_customer_order", label: "Fetched customer order", icon: "🔍" },
-    { tool: "check_refund_policy", label: "Ran policy engine", icon: "⚖️" },
-    { tool: "decision", label: "Decision produced", icon: "✅" },
-  ],
-  denied: [
-    { tool: "get_customer_order", label: "Fetched customer order", icon: "🔍" },
-    { tool: "check_refund_policy", label: "Ran policy engine", icon: "⚖️" },
-    { tool: "decision", label: "Decision produced", icon: "🚫" },
-  ],
-  escalated: [
-    { tool: "get_customer_order", label: "Fetched customer order", icon: "🔍" },
-    { tool: "check_refund_policy", label: "Ran policy engine — threshold exceeded", icon: "⚖️" },
-    { tool: "decision", label: "Escalated to human agent", icon: "🔺" },
-  ],
-  none: [
-    { tool: "response", label: "Conversational response — no tool calls", icon: "💬" },
-  ],
+const TOOL_LABELS = {
+  get_customer_order: "Fetched customer order",
+  check_refund_policy: "Ran policy engine",
+  get_refund_policy: "Read full policy document",
+};
+
+const TOOL_ICONS = {
+  get_customer_order: "🔍",
+  check_refund_policy: "⚖️",
+  get_refund_policy: "📄",
 };
 
 function TraceExpand({ trace }) {
-  const steps = TOOL_CALL_STEPS[trace.decision] || TOOL_CALL_STEPS.none;
+  const steps = trace.tool_calls?.length
+    ? trace.tool_calls.map((name) => ({
+        tool: name,
+        label: TOOL_LABELS[name] ?? name,
+        icon: TOOL_ICONS[name] ?? "🔧",
+      }))
+    : [{ tool: "response", label: "Conversational response — no tool calls", icon: "💬" }];
+
   return (
     <div className="border-t border-line bg-slate-50 px-4 py-4">
       <div className="grid gap-4 lg:grid-cols-2">

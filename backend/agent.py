@@ -2,7 +2,7 @@ import os
 import time
 from dataclasses import dataclass, field
 
-from agents import Agent, ModelSettings, Runner
+from agents import Agent, ModelSettings, Runner, ToolCallItem
 from langfuse.decorators import langfuse_context, observe
 from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -35,6 +35,7 @@ class AgentResult(AgentDecision):
     latency_ms: int = 0
     model_used: str
     order_details: dict = Field(default_factory=dict)
+    tool_calls: list[str] = Field(default_factory=list)
 
 
 class AgentUnavailableError(Exception):
@@ -143,6 +144,15 @@ def _extract_usage(result) -> tuple[int, int]:
     return prompt_tokens, completion_tokens
 
 
+def _extract_tool_calls(result) -> list[str]:
+    """Return ordered list of tool names actually called during the run."""
+    return [
+        item.raw_item.name
+        for item in getattr(result, "new_items", []) or []
+        if isinstance(item, ToolCallItem)
+    ]
+
+
 @retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(3))
 async def _run_agent(customer_id: str, message: str, history: list[dict] | None = None):
     history_text = _history_text(history)
@@ -170,6 +180,7 @@ async def run_agent(
         )
 
     prompt_tokens, completion_tokens = _extract_usage(run_result)
+    tool_calls = _extract_tool_calls(run_result)
     latency_ms = int((time.perf_counter() - start) * 1000)
     cost = calculate_cost(prompt_tokens, completion_tokens, MODEL_NAME)
 
@@ -178,7 +189,8 @@ async def run_agent(
 
     langfuse_context.update_current_observation(
         metadata={"customer_id": customer_id, "request_id": request_id,
-                  "decision": decision.decision, "policy_rule_triggered": decision.policy_rule}
+                  "decision": decision.decision, "policy_rule_triggered": decision.policy_rule,
+                  "tool_calls": tool_calls}
     )
     return AgentResult(
         **decision.model_dump(),
@@ -188,4 +200,5 @@ async def run_agent(
         latency_ms=latency_ms,
         model_used=MODEL_NAME,
         order_details=order_details,
+        tool_calls=tool_calls,
     )
