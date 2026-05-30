@@ -17,14 +17,14 @@ docker-compose up
 - Langfuse login: `admin@worknoon.local` / `worknoon-admin`
 
 ## Architecture
-The React + Vite frontend serves customer chat and an operations dashboard through Nginx. FastAPI exposes the chat, trace, and health APIs. PostgreSQL 16 stores customers, orders, refund requests, Langfuse tables, and agent logs. LangGraph runs the refund agent tool loop with OpenAI GPT-4o, while Langfuse captures traces in the self-hosted container.
+The React + Vite frontend serves customer chat and an operations dashboard through Nginx. FastAPI exposes the chat, trace, and health APIs. PostgreSQL 16 stores customers, orders, refund requests, Langfuse tables, and agent logs. The **OpenAI Agents SDK** runs the refund agent tool loop with GPT-4o, while Langfuse captures traces in the self-hosted container.
 
 ## Agent Loop
-Requests pass through prompt-injection screening before any model call. Safe requests require `OPENAI_API_KEY`; without it, the API escalates with a support handoff message instead of guessing a policy outcome. With an API key, requests enter a LangGraph StateGraph that calls `get_customer_order`, evaluates `check_refund_policy`, validates the structured Pydantic decision, calculates token cost from Langfuse's models endpoint, and writes the refund request plus audit log.
+Requests pass through prompt-injection screening before any model call. Safe requests require `OPENAI_API_KEY`; without it, the API escalates with a support handoff message instead of guessing a policy outcome. With an API key, requests enter an **OpenAI Agents SDK** `Runner.run()` loop (up to 10 turns) that calls `get_customer_order`, evaluates `check_refund_policy`, validates the structured Pydantic decision, calculates token cost from Langfuse's models endpoint, and writes the refund request plus audit log.
 
 The agent enforces two complementary layers of policy:
 1. **Deterministic engine** (`tools.py` → `check_refund_policy_data`) — rule-by-rule evaluation with no LLM involvement, applied at confirmation time.
-2. **LLM reasoning layer** (`agent.py` → LangGraph) — GPT-4o reads the full policy document and produces a structured `AgentDecision` with a customer-facing explanation.
+2. **LLM reasoning layer** (`agent.py` → OpenAI Agents SDK) — GPT-4o reads the full policy document and produces a structured `AgentDecision` with a customer-facing explanation.
 
 > For a full architectural walkthrough, see [SYSTEM_OVERVIEW.md](./SYSTEM_OVERVIEW.md).
 
