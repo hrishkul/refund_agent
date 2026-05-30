@@ -23,7 +23,7 @@ from models import ChatTrace, Customer, Decision, RefundLog, RefundRequest, Refu
 from pricing import calculate_cost
 from security import check_injection
 from seed import seed_data
-from tools import check_refund_policy_data, get_customer_order_data
+from tools import get_customer_order_data
 
 
 class ChatHistoryMessage(BaseModel):
@@ -65,8 +65,6 @@ class TraceResponse(BaseModel):
 BUSY_SUPPORT_MESSAGE = "Our favourite support agent seems busy. We'll connect you to someone else in a moment."
 limiter = Limiter(key_func=get_remote_address)
 
-REFUND_TERMS = {"refund", "return", "cancel", "exchange", "replace", "take it back", "defective", "damaged", "broken"}
-
 
 def _normalize_customer_code(value: str) -> str:
     normalized = value.strip().upper()
@@ -78,90 +76,6 @@ def _normalize_customer_code(value: str) -> str:
 def _message_customer_id(message: str) -> str | None:
     match = re.search(r"\bC[O0]{2}\d\b", message, flags=re.IGNORECASE)
     return _normalize_customer_code(match.group(0)) if match else None
-
-
-def _has_pending_approval(history: list[ChatHistoryMessage]) -> bool:
-    for item in reversed(history):
-        if item.role == "agent":
-            text = item.text.lower()
-            return "please reply confirm" in text and "refund" in text
-    return False
-
-
-def _is_confirmation(message: str) -> bool:
-    normalized = message.strip().lower()
-    return normalized in {"confirm", "confirmed", "yes", "yes confirm", "i confirm", "please confirm", "go ahead", "approve it"}
-
-
-def _is_decline(message: str) -> bool:
-    normalized = message.strip().lower()
-    return normalized in {"decline", "cancel", "no", "no thanks", "do not", "don't", "stop", "never mind", "nevermind"}
-
-
-async def _confirmed_refund_result(customer_id: str) -> AgentResult:
-    order = await get_customer_order_data(customer_id)
-    policy = check_refund_policy_data(order)
-    recommendation = policy.get("recommendation", "denied")
-    amount = float(order.get("total_amount") or 0)
-    if recommendation == "approved" and amount > 0:
-        reason = f"Confirmed. Your refund of ${amount:.2f} for {order.get('product_name', 'your order')} has been approved and should return to your original payment method within 5-7 business days."
-        return AgentResult(
-            decision="approved",
-            reason=reason,
-            policy_rule="eligible_standard_refund",
-            escalated=False,
-            model_used="policy-engine",
-            order_details=order,
-        )
-    if recommendation == "approved":
-        return AgentResult(
-            decision="escalated",
-            reason="I found the order is eligible, but I could not verify a valid refund amount. A senior ShopEase agent will review it within 24 hours.",
-            policy_rule="missing_refund_amount",
-            escalated=True,
-            model_used="policy-engine",
-            order_details=order,
-        )
-    return AgentResult(
-        decision=recommendation,
-        reason="I rechecked the order before confirming and it is no longer eligible for automatic approval. A ShopEase agent will review the details.",
-        policy_rule=policy.get("rule_violated") or "policy_recheck_failed",
-        escalated=recommendation == "escalated",
-        model_used="policy-engine",
-        order_details=order,
-    )
-
-
-async def _approval_confirmation_prompt(result: AgentResult, customer_id: str) -> AgentResult:
-    order = result.order_details
-    if not order.get("found") or float(order.get("total_amount") or 0) <= 0:
-        order = await get_customer_order_data(customer_id)
-    amount = float(order.get("total_amount") or 0)
-    if amount <= 0:
-        return AgentResult(
-            decision="escalated",
-            reason="This order appears eligible, but I could not verify a valid refund amount. A senior ShopEase agent will review it within 24 hours.",
-            policy_rule="missing_refund_amount",
-            escalated=True,
-            model_used=result.model_used,
-            prompt_tokens=result.prompt_tokens,
-            completion_tokens=result.completion_tokens,
-            cost_usd=result.cost_usd,
-            latency_ms=result.latency_ms,
-            order_details=order,
-        )
-    return AgentResult(
-        decision="none",
-        reason=f"{order.get('customer_name', 'Thanks')}, your refund of ${amount:.2f} for {order.get('product_name', 'your order')} is eligible. Please reply Confirm to issue it to your original payment method.",
-        policy_rule=None,
-        escalated=False,
-        model_used=result.model_used,
-        prompt_tokens=result.prompt_tokens,
-        completion_tokens=result.completion_tokens,
-        cost_usd=result.cost_usd,
-        latency_ms=result.latency_ms,
-        order_details=order,
-    )
 
 
 @asynccontextmanager
@@ -293,9 +207,8 @@ async def _chat_response(
     message: str,
     result: AgentResult,
     request_id: str,
-    save_refund: bool = False,
 ) -> ChatResponse:
-    if save_refund and result.decision != "none":
+    if result.decision not in ("none", None):
         await _save_refund_log(session, customer_id, message, result, request_id)
     await _save_chat_trace(session, customer_id, message, result, request_id)
     return ChatResponse(
@@ -323,21 +236,7 @@ async def chat(payload: ChatRequest, request: Request, session: AsyncSession = D
             model_used="security-filter",
             order_details=order,
         )
-        return await _chat_response(session, effective_customer_id, payload.message, result, request_id, save_refund=True)
-
-    if _has_pending_approval(payload.history) and _is_decline(payload.message):
-        result = AgentResult(
-            decision="none",
-            reason="No problem. I won't issue that refund. If you change your mind, you can ask me to check the return again.",
-            escalated=False,
-            model_used="conversation-memory",
-            policy_rule=None,
-        )
         return await _chat_response(session, effective_customer_id, payload.message, result, request_id)
-
-    if _has_pending_approval(payload.history) and _is_confirmation(payload.message):
-        result = await _confirmed_refund_result(effective_customer_id)
-        return await _chat_response(session, effective_customer_id, payload.message, result, request_id, save_refund=True)
 
     try:
         result = await run_agent(
@@ -356,9 +255,8 @@ async def chat(payload: ChatRequest, request: Request, session: AsyncSession = D
             model_used="unavailable",
             order_details=order,
         )
-    if result.decision == "approved":
-        result = await _approval_confirmation_prompt(result, effective_customer_id)
-    return await _chat_response(session, effective_customer_id, payload.message, result, request_id, save_refund=True)
+
+    return await _chat_response(session, effective_customer_id, payload.message, result, request_id)
 
 
 @app.get("/api/traces", response_model=list[TraceResponse])
