@@ -33,6 +33,15 @@ const orders = [
     image: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?auto=format&fit=crop&w=240&q=80"
   },
   {
+    id: "C003",
+    customer: "Cara Late",
+    product: "Wireless Earbuds",
+    date: "Apr 10, 2026",
+    status: "delivered",
+    total: "$65.00",
+    image: "https://images.unsplash.com/photo-1572536147248-ac59a8abfa4b?auto=format&fit=crop&w=240&q=80"
+  },
+  {
     id: "C004",
     customer: "Dev Escalate",
     product: "OLED Monitor",
@@ -174,8 +183,7 @@ export default function CustomerView() {
   const [loading, setLoading] = useState(false);
 
   const selectedCustomer = customers[customerId] || orders.find((order) => order.id === customerId)?.customer || "Guest";
-  const visibleOrders = useMemo(() => orders.filter((order) => order.id === customerId), [customerId]);
-  const displayedOrders = visibleOrders.length ? visibleOrders : orders.slice(0, 4);
+  const displayedOrders = useMemo(() => orders.filter((order) => order.id === customerId), [customerId]);
 
   async function submitMessage(messageText, customerOverride = null, historyOverride = null) {
     const currentCustomerId = customerOverride || customerId;
@@ -271,17 +279,24 @@ export default function CustomerView() {
           </div>
 
           <div className="flex-1 overflow-y-auto px-5 pb-6 sm:px-8">
-            <div className="grid gap-4">
-              {displayedOrders.map((order) => (
-                <OrderCard
-                  key={`${order.id}-${order.product}`}
-                  order={order}
-                  active={order.id === customerId}
-                  onSelect={() => selectOrder(order)}
-                  onRefund={() => requestRefund(order)}
-                />
-              ))}
-            </div>
+            {displayedOrders.length > 0 ? (
+              <div className="grid gap-4">
+                {displayedOrders.map((order) => (
+                  <OrderCard
+                    key={`${order.id}-${order.product}`}
+                    order={order}
+                    active={order.id === customerId}
+                    onSelect={() => selectOrder(order)}
+                    onRefund={() => requestRefund(order)}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <PackageCheck className="mb-3 h-10 w-10 text-slate-300" />
+                <p className="text-sm font-medium text-slate-500">No orders found for {selectedCustomer}</p>
+              </div>
+            )}
           </div>
         </section>
 
